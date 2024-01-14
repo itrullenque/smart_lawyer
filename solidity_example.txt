@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+
+contract BondToken is ERC20, Ownable {
+    using SafeMath for uint256;
+
+    uint256 public constant DECIMALS = 18;
+
+    struct BondDetails {
+        address issuer;
+        uint256 principalAmount;
+        uint256 maturityDate;
+        uint256 tradeDate;
+        uint256 issueDate;
+        uint256 reofferMarginToReferenceRate;
+        uint256 reofferYield;
+        uint256 coupon;
+        uint256 issuePrice;
+        string couponDates;
+        string isin;
+        uint256 redemptionPriceAtMaturity;
+        uint256 denominationPerAustralianNote;
+        uint256 recordDateForPayments;
+        string settlement;
+        string listing;
+        string governingLaw;
+    }
+
+    BondDetails public bondDetails;
+
+    constructor(
+        string memory name,
+        string memory symbol,
+        BondDetails memory _bondDetails
+    ) ERC20(name, symbol) Ownable(msg.sender) {
+        bondDetails = _bondDetails;
+        require(_bondDetails.maturityDate > block.timestamp, "Maturity date must be in the future");
+        require(_bondDetails.principalAmount > 0, "Invalid principal amount");
+
+        _mint(msg.sender, _bondDetails.principalAmount.mul(10**DECIMALS));
+    }
+
+    function calculateCouponPayment() public view returns (uint256) {
+        require(block.timestamp >= bondDetails.issueDate, "Coupon payment not started yet");
+
+        uint256 timeSinceIssuance = block.timestamp.sub(bondDetails.issueDate);
+        uint256 timeToNextPayment = bondDetails.maturityDate.sub(bondDetails.issueDate);
+
+        // Calculate the number of whole coupon periods
+        uint256 wholePeriods = timeSinceIssuance.div(timeToNextPayment);
+
+        // Calculate the coupon payment amount
+        uint256 couponPayment = bondDetails.principalAmount.mul(bondDetails.coupon).div(100);
+
+        return wholePeriods.mul(couponPayment);
+    }
+
+    function makeCouponPayment() external {
+        require(block.timestamp < bondDetails.maturityDate, "Coupon payment period ended");
+        require(balanceOf(msg.sender) > 0, "You don't hold any bonds");
+
+        uint256 paymentAmount = calculateCouponPayment();
+        uint256 balance = balanceOf(msg.sender);
+
+        require(paymentAmount > 0, "No coupon payment available for the current period");
+        require(balance >= paymentAmount, "Insufficient funds to receive coupon payment");
+
+        super._transfer(msg.sender, address(this), paymentAmount);
+        bondDetails.recordDateForPayments = block.timestamp;
+
+        emit Transfer(msg.sender, address(this), paymentAmount);
+    }
+
+    function redeemBond() external onlyOwner {
+        uint256 balance = balanceOf(msg.sender);
+        require(balance > 0, "You don't hold any bonds");
+
+        uint256 redemptionAmount = bondDetails.principalAmount.mul(10**DECIMALS);
+        _burn(msg.sender, redemptionAmount);
+
+        emit Transfer(msg.sender, address(0), redemptionAmount);
+    }
+
+    function enableRedemption() external onlyOwner {
+        require(block.timestamp >= bondDetails.maturityDate, "Cannot redeem before maturity date");
+        bondDetails.redemptionPriceAtMaturity = bondDetails.principalAmount.mul(10**DECIMALS);
+    }
+
+    function getBondDetails() external view returns (BondDetails memory) {
+        return bondDetails;
+    }
+}
